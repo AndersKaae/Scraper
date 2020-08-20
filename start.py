@@ -1,59 +1,84 @@
-import requests
 from bs4 import BeautifulSoup
 from database import *
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-def RemoveAnchors(url):
-    if "#" in url:
-        url = url.split("#")[0];
-    if url == "":
-        url = 'NULL'
-    return url
+def LaunchSelenium():
+    options = Options()
+	# Following two lines makes the chrome browser not show
+	#options.add_argument('--headless')
+	#options.add_argument('--disable-gpu')
+    
+    # Keeps browser open
+    #options.add_experimental_option("detach", True)
+    options.add_argument("user-data-dir=selenium")
+    browser = webdriver.Chrome('./chromedriver', chrome_options=options)
+    return browser
 
-def RemoveMailTo(url):
-    if "mailto:" in url:
-        url = "NULL"
-    return url
-
-def FromDomain(url, baseUrl):
-    #baseUrl = baseUrl.replace("https://","")
-    #baseUrl = baseUrl.replace("http://","")
-    if url[0] == '/':
-        url = baseUrl + url 
-    else:
-        url = 'NULL'
-    return url
+def AppendDomain(linkList, baseUrl):
+    newList = []
+    for url in linkList:
+        if url[0] == '/':
+            url = baseUrl + url
+            newList.append(url)
+    return newList
 
 def EvaluatePage(webContent):
-    i = 0
+    linkList = []
     soup = BeautifulSoup(webContent, features="html.parser")
     for a in soup.find_all('a', href=True):
         url = a['href']
-        url = RemoveAnchors(url)
-        url = RemoveMailTo(url)
-        url = FromDomain(url, baseUrl)
+        linkList.append(url)
+    return linkList
+
+def CleanList(linkList):
+    newList = []
+    for url in linkList:
+        # Checking for anchors #
+        if "#" in url:
+            url = url.split("#")[0]
+        if url == "":
+            url = 'NULL'
+
+        # Checking for mailto
+        if "mailto:" in url:
+            url = "NULL"
+
         if url != "NULL":
-            inserted = InserScraped(url, "NULL")
-            if inserted == True:
-                i=i+1
-    return i
+            newList.append(url)
+    return newList
 
-def DatabaseLoop():
-    url = GetFirstUncrawled()
-    print('Scraping:' + str(url))
-    response = requests.get(url)
-    UpdateScraped(url, response.content)
-    numberOfNew = EvaluatePage(response.content)
-    print('Added ' + str(numberOfNew) + ' new links.')
-    DatabaseLoop()
+def RemoveDuplicates(linkList):
+    newList = []
+    for url in linkList:
+        if url not in newList:
+            newList.append(url)
+    return newList
 
-baseUrl = 'https://www.legaldesk.dk'
-databaseurl = baseUrl + "/"
+def Main(url):
+    done = False
+    firstRun = True
+    while done == False:
+        if firstRun == True:
+            firstRun = False
+            # Launching selenium
+            browser = LaunchSelenium()
+        else:
+            url = GetFirstUncrawled()
+        browser.get(url)
+        # Get raw list of URLs
+        linkList = EvaluatePage(browser.page_source)
+        # Remove duplicates from list
+        linkList = RemoveDuplicates(linkList)
+        # Remove anchors and Mailto URLs
+        linkList = CleanList(linkList)
+        # Append Domain
+        linkList = AppendDomain(linkList, url)
+        # Store in DB
+        SaveURLs(linkList)
+        # Set URL as crawled
+        SetAsScraped()
 
-response = requests.get(baseUrl)
-
-InserScraped(databaseurl, response.content)
-
-numberOfNew = EvaluatePage(response.content)
-print('Added ' + str(numberOfNew) + ' new links.')
-DatabaseLoop()
-
+# Deleting existing DB 
+DeleteDatabaseData()
+Main('https://www.legaldesk.dk')
